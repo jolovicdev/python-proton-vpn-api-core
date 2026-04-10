@@ -111,23 +111,6 @@ class LocalAgentMixin:  # pylint: disable=too-few-public-methods
 
             return
 
-            if not await self.__attempt_to_request_connection_features(context):
-                return
-
-            if not await self.__attempt_to_listen(context):
-                agent_connection_drops += 1
-                # nosemgrep: gitlab.bandit.B311
-                sleep_seconds = random.uniform(0, 10)  # nosec B311
-                logger.warning(
-                    "Agent connection dropped (#%s). Retrying in %.1f seconds.",
-                    agent_connection_drops,
-                    sleep_seconds,
-                )
-                await asyncio.sleep(sleep_seconds)
-                continue
-
-            return
-
     # Absorb CancelledError before it is logged by Future's done callback handler
     def _handle_future_result(self, future: futures.Future):
         try:
