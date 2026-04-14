@@ -161,12 +161,23 @@ class KillSwitchConnectionHandler:
                     "Wireguard connection cannot use interface "
                     f"'{device.get_iface()}: {error}'")
                 continue
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning(
+                    f"Timeout adding route to device {device.get_iface()}; continuing."
+                )
+                continue
 
             # The new route doesn't seem to be available straight away.
             # For this reason, the routing table is polled until the route has been added.
-            await self._wait_for_vpn_server_route(
-                server_ip, device.get_iface(), found=True
-            )
+            try:
+                await self._wait_for_vpn_server_route(
+                    server_ip, device.get_iface(), found=True
+                )
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning(
+                    f"Timeout waiting for VPN server route to {server_ip} "
+                    f"on {device.get_iface()}; continuing anyway."
+                )
 
         self._server_ip = server_ip
 
@@ -183,12 +194,25 @@ class KillSwitchConnectionHandler:
 
         devices = self.nm_client.get_physical_devices()
         for device in devices:
-            await _wrap_future(
-                self.nm_client.remove_route_from_device(device, self._server_ip)
-            )
+            try:
+                await _wrap_future(
+                    self.nm_client.remove_route_from_device(device, self._server_ip)
+                )
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning(
+                    f"Timeout removing route from device {device.get_iface()}; continuing."
+                )
+                continue
+
             # The route doesn't seem to be removed straight away.
             # For this reason, the routing table is polled until the route has been removed.
-            await self._wait_for_vpn_server_route(self._server_ip, device.get_iface(), found=False)
+            try:
+                await self._wait_for_vpn_server_route(self._server_ip, device.get_iface(), found=False)
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning(
+                    f"Timeout waiting for VPN server route removal on "
+                    f"{device.get_iface()}; continuing anyway."
+                )
 
         self._server_ip = None
 

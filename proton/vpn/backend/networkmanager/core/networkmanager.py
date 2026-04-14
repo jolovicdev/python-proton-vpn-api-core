@@ -72,23 +72,29 @@ class LinuxNetworkManager(VPNConnection):
         """
         Starts a VPN connection using NetworkManager.
         """
-        # The VPN connection is started only if at least one of the TCP ports of the server to
-        # connect to is open. The reason for doing this check is that, after introducing the
-        # dummy kill switch network interface, the VPN connection backend tries to use it
-        # to establish the VPN connection.
         self._cancelled = False
 
-        server_reachable = await tcpcheck.is_any_port_reachable(
-            self._vpnserver.server_ip,
-            self._vpnserver.openvpn_ports.tcp
-        )
+        # Skip TCP reachability check for WireGuard (uses UDP) to avoid
+        # unnecessary SYN traffic and false negatives.
+        if self.protocol in ("wireguard",):
+            logger.debug("Skipping TCP reachability check for WireGuard.")
+        else:
+            # The VPN connection is started only if at least one of the TCP ports of the server to
+            # connect to is open. The reason for doing this check is that, after introducing the
+            # dummy kill switch network interface, the VPN connection backend tries to use it
+            # to establish the VPN connection.
+            server_reachable = await tcpcheck.is_any_port_reachable(
+                self._vpnserver.server_ip,
+                self._vpnserver.openvpn_ports.tcp,
+                cancel_check=lambda: self._cancelled
+            )
 
-        if not server_reachable:
-            logger.info("VPN server NOT reachable.")
-            self._notify_subscribers(events.Timeout(EventContext(connection=self)))
-            return
+            if not server_reachable:
+                logger.info("VPN server NOT reachable.")
+                self._notify_subscribers(events.Timeout(EventContext(connection=self)))
+                return
 
-        logger.info("VPN server REACHABLE.")
+            logger.info("VPN server REACHABLE.")
 
         if self._cancelled:
             logger.info("Connection cancelled.")

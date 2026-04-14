@@ -11,7 +11,7 @@ from typing import List, Union
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 5
+DEFAULT_TIMEOUT = 2
 
 
 def _get_address_family(
@@ -49,33 +49,31 @@ def is_port_reachable(
 
 
 async def is_any_port_reachable(
-        ip_address: str, ports: List[str], timeout: int = DEFAULT_TIMEOUT
+        ip_address: str, ports: List[str], timeout: int = DEFAULT_TIMEOUT,
+        cancel_check: callable = None
 ) -> bool:
     """
     Checks if the specified IP address is reachable by opening a TCP socket
     to any of the specified ports.
 
-    All ports are probed in parallel. As soon as a socket is opened to
-    one of them, connectivity is reported by returning True. If all
+    Ports are probed serially to avoid SYN floods. As soon as a socket is
+    opened to one of them, connectivity is reported by returning True. If all
     the connections to the different ports fail, then False is returned.
 
     :param ip_address: IP address to connect to.
-    :param port: TCP ports to try to connect to.
-    :param timeout_in_secs: Optional connection timeout.
+    :param ports: TCP ports to try to connect to.
+    :param timeout: Optional connection timeout.
+    :param cancel_check: Optional callable that returns True if the check
+        should be aborted early.
     :returns: True if a socket could be opened to the specified address/ports,
         or False otherwise.
     """
-    loop = asyncio.get_running_loop()
-
-    async def _is_port_reachable(port):
-        return await loop.run_in_executor(None, is_port_reachable, ip_address, port, timeout)
-
-    tasks = [
-        asyncio.create_task(_is_port_reachable(port))
-        for port in ports
-    ]
-    for task in as_completed(tasks):
-        try:
-            return await task
-        except Exception:  # pylint: disable=broad-except
+    for port in ports:
+        if cancel_check and cancel_check():
             return False
+        reachable = await asyncio.get_running_loop().run_in_executor(
+            None, is_port_reachable, ip_address, port, timeout
+        )
+        if reachable:
+            return True
+    return False

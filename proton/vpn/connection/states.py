@@ -178,9 +178,17 @@ class Disconnected(State):
             await self.context.connection.remove_persistence()
 
         if self.context.reconnection:
-            # The Kill switch is enabled to avoid leaks when switching servers, even when
-            # the kill switch setting is off.
-            await self.context.kill_switch.enable()
+            try:
+                # The Kill switch is enabled to avoid leaks when switching servers, even when
+                # the kill switch setting is off.
+                await self.context.kill_switch.enable()
+            except Exception:
+                if self.context.kill_switch_setting == KillSwitchSetting.OFF:
+                    try:
+                        await self.context.kill_switch.disable()
+                    except Exception:
+                        logger.exception("Error cleaning up kill switch after failed enable")
+                raise
 
             # When a reconnection is expected, an Up event is returned to start a new connection.
             # straight away.
@@ -191,10 +199,16 @@ class Disconnected(State):
             # The only reason for enabling permanent KS here is to switch from the
             # routed KS to the full KS if the user cancels the connection while in
             # Connecting state. Otherwise, the full KS should already be there.
-            await self.context.kill_switch.enable(permanent=True)
+            try:
+                await self.context.kill_switch.enable(permanent=True)
+            except Exception:
+                logger.exception("Error enabling permanent kill switch in disconnected state")
         else:
-            await self.context.kill_switch.disable()
-            await self.context.kill_switch.disable_ipv6_leak_protection()
+            try:
+                await self.context.kill_switch.disable()
+                await self.context.kill_switch.disable_ipv6_leak_protection()
+            except Exception:
+                logger.exception("Error disabling kill switch in disconnected state")
 
         if self.context.split_tunneling:
             # ST config is always cleared independently of if ST is disabled via settings or
@@ -250,16 +264,25 @@ class Connecting(State):
     async def run_tasks(self):
         permanent_ks = self.context.kill_switch_setting == KillSwitchSetting.PERMANENT
 
-        # The reason for always enabling the kill switch independently of the kill switch setting
-        # is to avoid leaks when switching servers, even with the kill switch turned off.
-        # However, when the kill switch setting is off, the kill switch has to be removed when
-        # reaching the connected state.
-        await self.context.kill_switch.enable(
-            self.context.connection.server,
-            permanent=permanent_ks
-        )
+        try:
+            # The reason for always enabling the kill switch independently of the kill switch setting
+            # is to avoid leaks when switching servers, even with the kill switch turned off.
+            # However, when the kill switch setting is off, the kill switch has to be removed when
+            # reaching the connected state.
+            await self.context.kill_switch.enable(
+                self.context.connection.server,
+                permanent=permanent_ks
+            )
 
-        await self.context.connection.start()
+            await self.context.connection.start()
+        except Exception:
+            if self.context.kill_switch_setting == KillSwitchSetting.OFF:
+                try:
+                    await self.context.kill_switch.disable()
+                    await self.context.kill_switch.disable_ipv6_leak_protection()
+                except Exception:
+                    logger.exception("Error cleaning up kill switch after connection failure")
+            raise
 
 
 class Connected(State):
@@ -299,26 +322,29 @@ class Connected(State):
         return self
 
     async def run_tasks(self):
-        if self.context.kill_switch_setting == KillSwitchSetting.OFF:
-            await self.context.kill_switch.enable_ipv6_leak_protection()
-            await self.context.kill_switch.disable()
-            if self.context.split_tunneling_setting.enabled:
-                try:
-                    await self.context.split_tunneling.set_config(
-                        self.context.split_tunneling_setting
-                            .get_config()
-                    )
-                except SplitTunnelingError:
-                    # We decided to treat split tunneling error as non-fatal, to prevent they
-                    # impact the core VPN functionality.
-                    logger.exception("Error setting split tunnel configuration")
+        try:
+            if self.context.kill_switch_setting == KillSwitchSetting.OFF:
+                await self.context.kill_switch.enable_ipv6_leak_protection()
+                await self.context.kill_switch.disable()
+                if self.context.split_tunneling_setting.enabled:
+                    try:
+                        await self.context.split_tunneling.set_config(
+                            self.context.split_tunneling_setting
+                                .get_config()
+                        )
+                    except SplitTunnelingError:
+                        # We decided to treat split tunneling error as non-fatal, to prevent they
+                        # impact the core VPN functionality.
+                        logger.exception("Error setting split tunnel configuration")
 
-        else:
-            # This is specific to the routing table KS implementation and should be removed.
-            # At this point we switch from the routed KS to the full-on KS.
-            await self.context.kill_switch.enable(
-                permanent=(self.context.kill_switch_setting == KillSwitchSetting.PERMANENT)
-            )
+            else:
+                # This is specific to the routing table KS implementation and should be removed.
+                # At this point we switch from the routed KS to the full-on KS.
+                await self.context.kill_switch.enable(
+                    permanent=(self.context.kill_switch_setting == KillSwitchSetting.PERMANENT)
+                )
+        except Exception:
+            logger.exception("Error applying kill switch settings in connected state")
 
         await self.context.connection.add_persistence()
 
@@ -403,6 +429,13 @@ class Error(State):
             type(self.context.event).__name__,
             self.context.event.context.error
         )
+
+        if self.context.kill_switch_setting == KillSwitchSetting.OFF:
+            try:
+                await self.context.kill_switch.disable()
+                await self.context.kill_switch.disable_ipv6_leak_protection()
+            except Exception:
+                logger.exception("Error disabling kill switch in error state")
 
         # we don't disconnect in the error state
         # so lets persist the connection data to upkeep on a separate run if necessary
