@@ -58,6 +58,7 @@ class NMKillSwitch(KillSwitch):
             self, vpn_server: Optional["VPNServer"] = None, permanent: bool = False
     ):  # noqa
         """Enables general kill switch."""
+        logger.info("NMKillSwitch.enable: permanent=%s vpn_server=%s", permanent, vpn_server.server_ip if vpn_server else None)
         # The full KS blocks all traffic except the one going to an already
         # existing VPN interface.
         await self._ks_handler.add_full_killswitch_connection(permanent)
@@ -67,6 +68,7 @@ class NMKillSwitch(KillSwitch):
         await self._ks_handler.remove_routed_killswitch_connection()
 
         if not vpn_server:
+            logger.debug("NMKillSwitch.enable: no VPN server specified, skipping routed KS.")
             return
 
         # The routed KS blocks all traffic except the one going to the specified VPN server IP.
@@ -78,8 +80,14 @@ class NMKillSwitch(KillSwitch):
 
     async def disable(self):
         """Disables general kill switch."""
-        await self._ks_handler.remove_full_killswitch_connection()
-        await self._ks_handler.remove_routed_killswitch_connection()
+        try:
+            await self._ks_handler.remove_full_killswitch_connection()
+        except Exception:
+            logger.exception("Error removing full kill-switch connection")
+        try:
+            await self._ks_handler.remove_routed_killswitch_connection()
+        except Exception:
+            logger.exception("Error removing routed kill-switch connection")
 
     async def enable_ipv6_leak_protection(self, permanent: bool = False):
         """Enables IPv6 kill switch."""
@@ -87,7 +95,10 @@ class NMKillSwitch(KillSwitch):
 
     async def disable_ipv6_leak_protection(self):
         """Disables IPv6 kill switch."""
-        await self._ks_handler.remove_ipv6_leak_protection()
+        try:
+            await self._ks_handler.remove_ipv6_leak_protection()
+        except Exception:
+            logger.exception("Error removing IPv6 leak protection")
 
     @staticmethod
     def _get_priority() -> int:

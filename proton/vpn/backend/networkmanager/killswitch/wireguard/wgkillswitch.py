@@ -60,10 +60,12 @@ class WGKillSwitch(KillSwitch):
             self, vpn_server: Optional["VPNServer"] = None, permanent: bool = False
     ):  # noqa
         """Enables the kill switch."""
+        logger.info("WGKillSwitch.enable: permanent=%s vpn_server=%s", permanent, vpn_server.server_ip if vpn_server else None)
         # Block all traffic.
         await self._ks_handler.add_kill_switch_connection(permanent)
 
         if not vpn_server:
+            logger.debug("WGKillSwitch.enable: no VPN server specified, skipping route.")
             return
 
         # Allow traffic going to the VPN server IP.
@@ -73,8 +75,14 @@ class WGKillSwitch(KillSwitch):
 
     async def disable(self):
         """Disables general kill switch."""
-        await self._ks_handler.remove_killswitch_connection()
-        await self._ks_handler.remove_vpn_server_route()
+        try:
+            await self._ks_handler.remove_killswitch_connection()
+        except Exception:
+            logger.exception("Error removing kill-switch connection")
+        try:
+            await self._ks_handler.remove_vpn_server_route()
+        except Exception:
+            logger.exception("Error removing VPN server route")
 
     async def enable_ipv6_leak_protection(self, permanent: bool = False):
         """Enables IPv6 kill switch."""
@@ -85,7 +93,10 @@ class WGKillSwitch(KillSwitch):
 
     async def disable_ipv6_leak_protection(self):
         """Disables IPv6 kill switch."""
-        await self._ks_handler.remove_ipv6_leak_protection()
+        try:
+            await self._ks_handler.remove_ipv6_leak_protection()
+        except Exception:
+            logger.exception("Error removing IPv6 leak protection")
 
     @staticmethod
     def _get_priority() -> int:

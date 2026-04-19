@@ -275,6 +275,25 @@ async def test_disconnected_run_tasks_when_reconnection_is_requested_and_should_
 
 
 @pytest.mark.asyncio
+async def test_disconnected_run_tasks_skips_kill_switch_for_wireguard_when_ks_off():
+    """
+    When reconnection is requested for WireGuard and kill switch is OFF,
+    the transient kill switch should be skipped.
+    """
+    context = AsyncMock()
+    context.reconnection = Mock()
+    context.reconnection.protocol = "wireguard"
+    context.kill_switch_setting = KillSwitchSetting.OFF
+    disconnected = states.Disconnected(context=context)
+
+    generated_event = await disconnected.run_tasks()
+
+    assert call.kill_switch.enable() not in context.method_calls
+    assert isinstance(generated_event, events.Up)
+    assert generated_event.context.connection is context.reconnection
+
+
+@pytest.mark.asyncio
 async def test_disconnected_run_tasks_when_there_is_no_connection():
     """
     When there is no current connection and reconnection was not requested,
@@ -327,6 +346,24 @@ async def test_connecting_run_tasks(kill_switch_setting):
 
 
 @pytest.mark.asyncio
+async def test_connecting_run_tasks_skips_kill_switch_for_wireguard_when_ks_off():
+    """
+    When connecting with WireGuard and kill switch is OFF,
+    the transient kill switch should be skipped.
+    """
+    context = AsyncMock()
+    context.kill_switch_setting = KillSwitchSetting.OFF
+    context.connection.protocol = "wireguard"
+
+    connecting = states.Connecting(context=context)
+
+    await connecting.run_tasks()
+
+    assert call.kill_switch.enable() not in context.method_calls
+    assert call.connection.start() in context.method_calls
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kill_switch_setting", [KillSwitchSetting.ON, KillSwitchSetting.PERMANENT, KillSwitchSetting.OFF]
 )
@@ -359,6 +396,27 @@ async def test_connected_run_tasks(kill_switch_setting):
             call.split_tunneling.set_config(context.split_tunneling_setting.get_config()),
             call.connection.add_persistence(),
         ]
+
+
+@pytest.mark.asyncio
+async def test_connected_run_tasks_skips_transient_ks_for_wireguard_when_ks_off():
+    """
+    When connected with WireGuard and kill switch is OFF,
+    transient kill switch and IPv6 leak protection should be skipped.
+    """
+    context = AsyncMock(name="context")
+    context.kill_switch_setting = KillSwitchSetting.OFF
+    context.connection.protocol = "wireguard"
+    context.event.context.forwarded_port = None
+    context.split_tunneling_setting = Mock(name="split_tunneling_setting")
+
+    connected = states.Connected(context)
+
+    await connected.run_tasks()
+
+    assert call.kill_switch.enable_ipv6_leak_protection() not in context.method_calls
+    assert call.kill_switch.disable() not in context.method_calls
+    assert call.connection.add_persistence() in context.method_calls
 
 
 @pytest.mark.asyncio

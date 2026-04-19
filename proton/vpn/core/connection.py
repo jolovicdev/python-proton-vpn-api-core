@@ -173,43 +173,84 @@ class VPNConnector:  # pylint: disable=too-many-instance-attributes
         """
         ks_setting = KillSwitchSetting(settings.killswitch)
         protocol = settings.protocol
+        logger.info(
+            "Applying settings: killswitch=%s protocol=%s",
+            ks_setting.name, protocol
+        )
         self._set_ks_setting(ks_setting, protocol)
         await self._apply_kill_switch_setting(ks_setting)
 
         if self.current_connection:
+            logger.debug("Updating settings on current connection.")
             await self.current_connection.update_settings(settings)
 
         st_setting = settings.features.split_tunneling
         self._set_split_tunneling_setting(st_setting)
         # nosemgrep: python.lang.maintainability.is-function-without-parentheses.is-function-without-parentheses  # pylint: disable=line-too-long  # noqa: E501
         if self.is_split_tunneling_available and self.is_connected:
+            logger.debug("Applying split tunneling settings.")
             await self._apply_split_tunneling_settings(st_setting, ks_setting)
+        logger.info("Settings applied successfully.")
+
+    def _is_current_connection_wireguard(self) -> bool:
+        return (
+            self.current_connection is not None
+            and getattr(self.current_connection, "protocol", None) == "wireguard"
+        )
 
     async def _apply_kill_switch_setting(self, kill_switch_setting: KillSwitchSetting):
         """Enables/disables the kill switch depending on the setting value."""
         kill_switch = self._current_state.context.kill_switch
 
+        async def _safe_disable():
+            try:
+                await kill_switch.disable()
+            except Exception:
+                logger.exception("Error disabling kill switch")
+
+        async def _safe_disable_ipv6():
+            try:
+                await kill_switch.disable_ipv6_leak_protection()
+            except Exception:
+                logger.exception("Error disabling IPv6 leak protection")
+
+        async def _safe_enable_ipv6():
+            try:
+                await kill_switch.enable_ipv6_leak_protection()
+            except Exception:
+                logger.exception("Error enabling IPv6 leak protection")
+
         if kill_switch_setting == KillSwitchSetting.PERMANENT:
-            await kill_switch.enable(permanent=True)
+            try:
+                await kill_switch.enable(permanent=True)
+            except Exception:
+                logger.exception("Error enabling permanent kill switch")
             # Since full KS already prevents IPv6 leaks:
-            await kill_switch.disable_ipv6_leak_protection()
+            await _safe_disable_ipv6()
 
         elif kill_switch_setting == KillSwitchSetting.ON:
             if isinstance(self._current_state, states.Disconnected):
-                await kill_switch.disable()
-                await kill_switch.disable_ipv6_leak_protection()
+                await _safe_disable()
+                await _safe_disable_ipv6()
             else:
-                await kill_switch.enable(permanent=False)
+                try:
+                    await kill_switch.enable(permanent=False)
+                except Exception:
+                    logger.exception("Error enabling kill switch")
                 # Since full KS already prevents IPv6 leaks:
-                await kill_switch.disable_ipv6_leak_protection()
+                await _safe_disable_ipv6()
 
         elif kill_switch_setting == KillSwitchSetting.OFF:
             if isinstance(self._current_state, states.Disconnected):
-                await kill_switch.disable()
-                await kill_switch.disable_ipv6_leak_protection()
+                await _safe_disable()
+                await _safe_disable_ipv6()
+            elif self._is_current_connection_wireguard():
+                logger.info("WireGuard with kill switch OFF: skipping IPv6 leak protection.")
+                await _safe_disable()
+                await _safe_disable_ipv6()
             else:
-                await kill_switch.enable_ipv6_leak_protection()
-                await kill_switch.disable()
+                await _safe_enable_ipv6()
+                await _safe_disable()
 
         else:
             raise RuntimeError(f"Unexpected kill switch setting: {kill_switch_setting}")

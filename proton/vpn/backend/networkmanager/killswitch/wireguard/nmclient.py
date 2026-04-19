@@ -21,6 +21,8 @@ along with ProtonVPN.  If not, see <https://www.gnu.org/licenses/>.
 """
 # pylint: disable=duplicate-code
 
+import shutil
+import subprocess  # nosec B404:blacklist # nosemgrep
 from concurrent.futures import Future
 from threading import Thread, Lock
 from typing import Optional, List
@@ -350,6 +352,25 @@ class NMClient:
             save_to_disk=False, cancellable=None, callback=on_connection_commited
         )
 
+    @staticmethod
+    def _get_gateway_from_ip_route(device_iface: str) -> Optional[str]:
+        """Fallback to kernel routing table when NM returns no gateway."""
+        ip_path = shutil.which("ip") or "/usr/sbin/ip"
+        try:
+            result = subprocess.run(  # nosec subprocess_without_shell_equals_true
+                [ip_path, "route", "show", "dev", device_iface],
+                capture_output=True, encoding="utf-8", check=True
+            )
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("default"):
+                    parts = line.split()
+                    if "via" in parts:
+                        return parts[parts.index("via") + 1]
+        except Exception:
+            logger.exception("Failed to read gateway from ip route for %s", device_iface)
+        return None
+
     @classmethod
     def add_route_to_device(
             cls, device: NM.Device, new_server_ip: str, old_server_ip: Optional[str] = None
@@ -374,7 +395,15 @@ class NMClient:
                 # Remove any existing routes to the new server that may have been left over.
                 cls._remove_ipv4_routes(active_connection, new_server_ip)
 
-                gateway = active_connection.get_ip4_config().get_gateway()
+                ip4_config = active_connection.get_ip4_config()
+                gateway = ip4_config.get_gateway() if ip4_config else None
+                if not gateway:
+                    logger.warning(
+                        "NM gateway missing for %s, falling back to ip route.",
+                        device.get_iface()
+                    )
+                    gateway = cls._get_gateway_from_ip_route(device.get_iface())
+
                 if not gateway:
                     raise GatewayNotFoundError(
                         "Gateway not found on interface "

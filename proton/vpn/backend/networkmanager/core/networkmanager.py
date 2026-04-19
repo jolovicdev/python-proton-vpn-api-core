@@ -73,6 +73,7 @@ class LinuxNetworkManager(VPNConnection):
         Starts a VPN connection using NetworkManager.
         """
         self._cancelled = False
+        logger.info("Starting VPN connection: protocol=%s server=%s", self.protocol, self._vpnserver.server_ip)
 
         # Skip TCP reachability check for WireGuard (uses UDP) to avoid
         # unnecessary SYN traffic and false negatives.
@@ -83,6 +84,7 @@ class LinuxNetworkManager(VPNConnection):
             # connect to is open. The reason for doing this check is that, after introducing the
             # dummy kill switch network interface, the VPN connection backend tries to use it
             # to establish the VPN connection.
+            logger.debug("Running TCP reachability check.")
             server_reachable = await tcpcheck.is_any_port_reachable(
                 self._vpnserver.server_ip,
                 self._vpnserver.openvpn_ports.tcp,
@@ -90,17 +92,18 @@ class LinuxNetworkManager(VPNConnection):
             )
 
             if not server_reachable:
-                logger.info("VPN server NOT reachable.")
+                logger.warning("VPN server NOT reachable: %s", self._vpnserver.server_ip)
                 self._notify_subscribers(events.Timeout(EventContext(connection=self)))
                 return
 
             logger.info("VPN server REACHABLE.")
 
         if self._cancelled:
-            logger.info("Connection cancelled.")
+            logger.info("Connection cancelled before setup.")
             self._notify_subscribers(events.Disconnected(EventContext(connection=self)))
             return
 
+        logger.debug("Setting up NetworkManager connection profile.")
         future_connection = self.setup()  # Creates the network manager connection.
         loop = asyncio.get_running_loop()
         try:
@@ -118,12 +121,13 @@ class LinuxNetworkManager(VPNConnection):
             return
 
         if self._cancelled:
-            logger.info("Connection cancelled.")
+            logger.info("Connection cancelled after setup, removing NM connection.")
             await self.remove_connection(connection)
             self._notify_subscribers(events.Disconnected(EventContext(connection=self)))
             return
 
         try:
+            logger.debug("Activating NetworkManager connection.")
             future_vpn_connection = self.nm_client.start_connection_async(connection)
             vpn_connection = await loop.run_in_executor(
                 None, future_vpn_connection.result
@@ -147,8 +151,10 @@ class LinuxNetworkManager(VPNConnection):
 
     async def stop(self, connection=None):
         """Stops the VPN connection."""
+        logger.info("Stopping VPN connection.")
         # We directly remove the connection to avoid leaking NM connections.
         if not self._is_nm_connection_active():
+            logger.debug("NM connection not active, notifying disconnected.")
             self._notify_subscribers(
                 events.Disconnected(EventContext(connection=self))
             )
@@ -159,16 +165,20 @@ class LinuxNetworkManager(VPNConnection):
             # is reachable, but before the underlying NM connection is created.
             # In that case we flag it as cancelled, so the creation of the underlying
             # NM connection is skipped.
+            logger.debug("No NM connection found, marking as cancelled.")
             self._cancelled = True
         else:
+            logger.debug("Removing NM connection.")
             await self.remove_connection(connection)
 
     async def remove_connection(self, connection=None):
         """Removes the VPN connection."""
         connection = connection or self._get_nm_connection()
         if not connection:
+            logger.debug("No NM connection to remove.")
             return
 
+        logger.debug("Requesting NM to remove connection.")
         future = self.nm_client.remove_connection_async(connection)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, future.result)

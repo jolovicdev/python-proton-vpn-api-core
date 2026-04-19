@@ -68,12 +68,17 @@ async def is_any_port_reachable(
     :returns: True if a socket could be opened to the specified address/ports,
         or False otherwise.
     """
+    logger.debug("is_any_port_reachable: ip=%s ports=%s timeout=%s", ip_address, ports, timeout)
     for port in ports:
         if cancel_check and cancel_check():
+            logger.debug("TCP check cancelled for %s:%s", ip_address, port)
             return False
         reachable = await asyncio.get_running_loop().run_in_executor(
             None, is_port_reachable, ip_address, port, timeout
         )
+        logger.debug("TCP probe %s:%s => reachable=%s", ip_address, port, reachable)
         if reachable:
+            logger.info("TCP reachability success: %s:%s", ip_address, port)
             return True
+    logger.info("TCP reachability failed for all ports on %s", ip_address)
     return False

@@ -130,6 +130,7 @@ class KillSwitchConnectionHandler:
         """Adds full kill switch connection to Network Manager. This connection blocks all
         outgoing traffic when not connected to VPN, with the exception of torrent client which will
         require to be bonded to the VPN interface.."""
+        logger.info("Default KS: adding full kill-switch connection permanent=%s", permanent)
         await self._ensure_connectivity_check_is_disabled()
 
         connection_id = _get_connection_id(self._connection_prefix, permanent)
@@ -156,11 +157,11 @@ class KillSwitchConnectionHandler:
             self.nm_client.add_connection_async(kill_switch.connection, save_to_disk=permanent)
         )
 
-        logger.debug(f"{'Permanent' if permanent else 'Non-permanent'} kill switch added.")
+        logger.debug("%s kill switch added.", 'Permanent' if permanent else 'Non-permanent')
         await self._remove_connection(
             connection_id=_get_connection_id(self._connection_prefix, permanent=not permanent)
         )
-        logger.debug(f"{'Non-permanent' if permanent else 'Permanent'} kill switch removed.")
+        logger.debug("%s kill switch removed.", 'Non-permanent' if permanent else 'Permanent')
 
     async def add_routed_killswitch_connection(self, server_ip: str, permanent: bool):
         """Add routed kill switch connection to Network Manager.
@@ -170,6 +171,7 @@ class KillSwitchConnectionHandler:
         temporary though as it will be removed once we establish a VPN connection and will
         get replaced by the full kill switch connection.
         """
+        logger.info("Default KS: adding routed kill-switch connection for %s permanent=%s", server_ip, permanent)
         await self._ensure_connectivity_check_is_disabled()
 
         general_config = KillSwitchGeneralConfig(
@@ -184,11 +186,12 @@ class KillSwitchConnectionHandler:
         await _wrap_future(
             self.nm_client.add_connection_async(kill_switch.connection, save_to_disk=permanent)
         )
-        logger.debug("Routed kill switch added.")
+        logger.debug("Routed kill switch added for %s.", server_ip)
 
     async def add_ipv6_leak_protection(self):
         """Adds IPv6 kill switch to NetworkManager. This connection is mainly
         to prevent IPv6 leaks while using IPv4."""
+        logger.info("Default KS: adding IPv6 leak protection.")
         await self._ensure_connectivity_check_is_disabled()
 
         connection_id = _get_connection_id(
@@ -220,7 +223,7 @@ class KillSwitchConnectionHandler:
 
     async def remove_full_killswitch_connection(self):
         """Removes full kill switch connection."""
-        logger.debug("Removing full kill switch...")
+        logger.info("Default KS: removing full kill switch.")
         await self._remove_connection(
             _get_connection_id(self._connection_prefix, permanent=True)
         )
@@ -231,7 +234,7 @@ class KillSwitchConnectionHandler:
 
     async def remove_routed_killswitch_connection(self):
         """Removes routed kill switch connection."""
-        logger.debug("Removing routed kill switch...")
+        logger.info("Default KS: removing routed kill switch.")
         await self._remove_connection(
             _get_connection_id(self._connection_prefix, permanent=True, routed=True)
         )
@@ -242,7 +245,7 @@ class KillSwitchConnectionHandler:
 
     async def remove_ipv6_leak_protection(self):
         """Removes IPv6 kill switch connection."""
-        logger.debug("Removing IPv6 leak protection...")
+        logger.info("Default KS: removing IPv6 leak protection.")
         await self._remove_connection(
             _get_connection_id(self._connection_prefix, permanent=False, ipv6=True)
         )
